@@ -1,0 +1,26 @@
+Dragonfly Development CodeIgniter Auth Add-on
+http://github.com/dflydev/dd-ci-ddauth
+
+
+The ddauth add-on for CodeIgniter is intended to be a flexible authentication
+library focussing almost entirely on the problem of creating a secure
+authentication ticket and attempts to place as few restrictions as possible
+on the application using it.
+
+The primary purpose for writing this library was the fact that many of the
+existing CodeIgniter authentication systems were either too complicated to
+implement easily, required too much integration into the application itself
+or focused solely on cookies and did not support fallback authentication
+methods for when cookies are not available.
+
+The latter is particularly important when using any sort of application with
+a web application that requires authentication as Flash cannot be assumed to 
+send the browser's cookies reliably. In this case, it is beneficial to be able
+to pass the authentication ticket to the Flash movie and instruct it to pass
+the ticket along as a GET or POST param.
+
+
+The core security principles were inspired by the "Dos and Don'ts of Client
+Authentication on the Web" document found here:
+
+http://cookies.lcs.mit.edu/pubs/webauth:tr.pdf
