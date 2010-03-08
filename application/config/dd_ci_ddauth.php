@@ -9,7 +9,27 @@
  * This method can be used to do controller-specific configuration
  * of ddauth prior to ddauth doing its work.
  */
-$config['ddauth_configurationMethodName'] = 'configureDdAuth'
+$config['ddauth_configurationMethodName'] = 'ddAuthConfigure';
+
+/**
+ * Validate credentials method name
+ *
+ * This method will be called on the controller if the controller
+ * implements this method.
+ *
+ * Method signature: $username = null, $password = null
+ */
+$config['ddauth_validateCredentialsMethodName'] = 'ddAuthValidateCredentials';
+
+/**
+ * Error method name
+ *
+ * This method will be called on the controller if the controller
+ * implements this method and an error is detected.
+ *
+ * Method signature: $errorKey, $errorName
+ */
+$config['ddauth_errorMethodName'] = 'ddAuthError';
 
 
 /**
@@ -73,7 +93,7 @@ $config['ddauth_params_login_passwordParamName'] = 'ddauth_password';
  *
  * Should a sign in be required, to where should the client be redirected?
  */
-$config['ddauth_redirects_signin_redirectPath'] = 'signin'
+$config['ddauth_redirects_signin_redirectPath'] = 'signin';
 
 
 /**
@@ -95,11 +115,28 @@ $config['ddauth_ticket_expiration'] = 18000; # five hours (60*60*5)
 /**
  * Ticket keepalive?
  *
- * If true, the ticket will be replaced with a fresh ticket on every
- * request keeping the ticket alive as long as the user continues to
- * visit the site before the most recent ticket expires.
+ * If true, the ticket will be replaced with a fresh ticket on the
+ * first request after a threshold time has passed keeping the ticket
+ * alive as long as the user continues to visit the site before the
+ * most recent ticket expires.
  */
 $config['ddauth_ticket_keepalive'] = true;
+
+/**
+ * Ticket keepalive threshold.
+ * 
+ * After how many seconds should we generate a new ticket when keepalive is
+ * turned on?
+ *
+ * If this number is set too low, keepalive may force a new cookie onto
+ * the user more frequently than is really required.
+ *
+ * Remember that every cookie that is generated has an expiration date,
+ * and it is going to be GOOD for that entire time! Keepalive may
+ * result in the creation of many long-living valid cookies for a
+ * potential attacker to use.
+ */
+$config['ddauth_ticket_keepaliveThreshold'] = 300; # 5 minutes (60*5)
 
 /**
  * Ticket cookie domain
@@ -113,7 +150,35 @@ $config['ddauth_ticket_cookie_domain'] = null;
  *
  * If cookie path cannot be dtermined automatically, set it here.
  */
-$config['ddauth_ticket_cookie_path']
+$config['ddauth_ticket_cookie_path'] = null;
+
+/**
+ * Ticket cookie prefix
+ *
+ * If cookie prefix cannot be dtermined automatically, set it here.
+ */
+$config['ddauth_ticket_cookie_prefix'] = null;
+
+
+/**
+ * SESSION
+ */
+
+/**
+ * What type of session handler is used?
+ * 
+ * ci - Native CodeIgniter session
+ * php - Native PHP Sessions
+ * callbacks - Getter and setter callbacks
+ * methods - Getter and setter controller methods
+ */
+$config['ddauth_session_handler'] = 'ci';
+
+/**
+ * Use session to maintain flash messages?
+ */
+$config['ddauth_session_allowFlash'] = true;
+
 
 
 // Include site-specific ddauth configuration if it exists.
