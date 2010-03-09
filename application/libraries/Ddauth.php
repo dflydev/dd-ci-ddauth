@@ -982,16 +982,6 @@ class Ddauth {
         );
     }
 
-    function test() {
-        print $this->getSessionData('foo');
-        print " [ " . $this->signinRedirectPath . " ]\n";
-        if ( $this->id === null ) {
-            print " [ no login? ]\n";
-        } else {
-            print " [ " . $this->id . " ]\n";
-        }
-    }
-
 }
 
 ?>
