@@ -9,7 +9,7 @@
  * This method can be used to do controller-specific configuration
  * of ddauth prior to ddauth doing its work.
  */
-$config['ddauth_configurationMethodName'] = 'ddAuthConfigure';
+$config['ddauth_configurationMethodName'] = 'ddauthConfigure';
 
 /**
  * Validate credentials method name
@@ -19,7 +19,21 @@ $config['ddauth_configurationMethodName'] = 'ddAuthConfigure';
  *
  * Method signature: $username = null, $password = null
  */
-$config['ddauth_validateCredentialsMethodName'] = 'ddAuthValidateCredentials';
+$config['ddauth_validateCredentialsMethodName'] = 'ddauthValidateCredentials';
+
+/**
+ * Handle authentication success
+ *
+ * This method will be called on the controller if the controller
+ * implements this method and authentication was a success.
+ *
+ * One param is passed that represents whether or not the call is
+ * related to a login success or a continuation success. If the
+ * param value is true, it should be considered a login success.
+ *
+ * Method signature: $isLogin
+ */
+$config['ddauth_handleAuthSuccessMethodName'] = 'ddauthHandleAuthSuccess';
 
 /**
  * Error method name
@@ -29,7 +43,7 @@ $config['ddauth_validateCredentialsMethodName'] = 'ddAuthValidateCredentials';
  *
  * Method signature: $errorKey, $errorName
  */
-$config['ddauth_errorMethodName'] = 'ddAuthError';
+$config['ddauth_errorMethodName'] = 'ddauthError';
 
 
 /**

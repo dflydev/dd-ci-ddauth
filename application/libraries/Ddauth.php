@@ -23,7 +23,7 @@ class Ddauth {
     /**
      * Cache of config params.
      */
-    var $configParamCache = array();
+    var $_configParamCache = array();
 
     /**
      * Session is not initialized by default.
@@ -48,6 +48,13 @@ class Ddauth {
      * Config: ddauth_validateCredentialsMethodName
      */
     var $validateCredentialsMethodName = null;
+
+    /**
+     * Handle authentication success
+     * General configuration.
+     * Config: ddauth_validateCredentialsMethodName
+     */
+    var $handleAuthSuccessMethodName = null;
 
     /**
      * Name of controller method to call to handle errors.
@@ -132,14 +139,19 @@ class Ddauth {
     var $configurationCb = null;
 
     /**
-     * Callback to handle errors.
-     */
-    var $errorCb = null;
-
-    /**
      * Callback to handle credential validation.
      */
     var $validateCredentialsCb = null;
+
+    /**
+     * Callback to handle authentication success.
+     */
+    var $handleAuthSuccessCb = null;
+
+    /**
+     * Callback to handle errors.
+     */
+    var $errorCb = null;
 
     /**
      * Constructor
@@ -162,6 +174,10 @@ class Ddauth {
             'ddauth_validateCredentialsMethodName'
         );
 
+        $this->handleAuthSuccessMethodName = $config->item(
+            'ddauth_handleAuthSuccessMethodName'
+        );
+
         $this->errorMethodName = $config->item(
             'ddauth_errorMethodName'
         );
@@ -174,7 +190,7 @@ class Ddauth {
         // Ticket
         $this->ticketParamName = $config->item('ddauth_ticket_paramName');
         $this->ticketExpiration = $config->item('ddauth_ticket_expiration');
-        $this->ticketKeepalive = $this->sanitizeBool(
+        $this->ticketKeepalive = $this->_sanitizeBool(
             $config->item('ddauth_ticket_keepalive')
         );
         $this->ticketKeepaliveThreshold = $config->item(
@@ -198,7 +214,54 @@ class Ddauth {
     }
 
     /**
+     * Redirect to sign in page
+     *
+     * Adds the current URL to the session as the requested URL if
+     * a requested URL is not already specified and then redirects
+     * to the sign in page.
+     */
+    function redirectToSignin() {
+
+        $CI =& get_instance();
+        $CI->load->helper('url');
+
+        if ( ! $this->getSessionData('ddauth.requestedUrl') ) {
+            $this->setSessionData('ddauth.requestedUrl', current_url());
+        }
+
+        redirect($this->signinRedirectPath);
+    }
+
+    /**
+     * Perform login
+     *
+     * Performs login for specified username and password. If the
+     * credentials validate, the ticket is set and the user identification
+     * is returned.
+     *
+     * @param string $username Username
+     * @param string $password Password
+     * @return mixed Null or user identification
+     */
+    function performLogin($username = null, $password = null) {
+        if ( $id = $this->validateCredentials($username, $password) ) {
+            $this->id = $id;
+            $this->_setTicket($this->_generateTicket($this->id));
+            $this->isLoggedIn = true;
+            $this->reportAuthSuccess(true);
+            return $id;
+        }
+        return null;
+    }
+
+    /**
      * Execute authentication
+     *
+     * Attempts to handle all of the specified automated auth related tasks
+     * in one go. Once this method has completed, we should be able to know
+     * whether or not the end user is authenticated or not.
+     *
+     * @return bool Are we authenticated?
      */
     function execute() {
 
@@ -206,9 +269,9 @@ class Ddauth {
 
         $loggedIn = false;
 
-        $loggedOut = $this->attemptLogout();
+        $loggedOut = $this->_attemptLogout();
 
-        if ( $this->attemptLogin() ) {
+        if ( $this->_attemptLogin() ) {
             $loggedIn = true;
             $loggedOut = false;
         }
@@ -222,7 +285,7 @@ class Ddauth {
 
             // If we are not already listed as having logged in, we should
             // check to see if we are still logged in from before.
-            if ( ! $this->attemptContinuation() ) {
+            if ( ! $this->_attemptContinuation() ) {
                 // If we failed the continuation attempt we should
                 // invalidate the ticket.
                 $this->invalidateTicket();
@@ -231,6 +294,8 @@ class Ddauth {
         }
 
         $this->attemptPageView();
+
+        return $this->isLoggedIn;
 
     }
 
@@ -241,7 +306,7 @@ class Ddauth {
      * `ddauth_params_logout_source` the visitor is logged out.
      * @return bool Was log this a log out attempt?
      */
-    function attemptLogout() {
+    function _attemptLogout() {
 
         $CI =& get_instance();
         $config = $CI->config;
@@ -267,7 +332,7 @@ class Ddauth {
      * `ddauth_params_login_passwordParamName` are tested.
      * @return bool Was log in attempt a success?
      */
-    function attemptLogin() {
+    function _attemptLogin() {
 
         $loginValue = $this->getLoginParam();
 
@@ -276,10 +341,7 @@ class Ddauth {
             $username = $this->getLoginUsernameParam();
             $password = $this->getLoginPasswordParam();
 
-            if ( $id = $this->validateCredentials($username, $password) ) {
-                $this->id = $id;
-                $this->setTicket($this->generateTicket($this->id));
-                $this->isLoggedIn = true;
+            if ( $id = $this->performLogin($username, $password) ) {
                 if ( $requestedUrl = $this->getSessionData('ddauth.requestedUrl') ) {
                     $this->unsetSessionData('ddauth.requestedUrl');
                     redirect($requestedUrl);
@@ -300,18 +362,6 @@ class Ddauth {
 
     }
 
-    function redirectToSignin() {
-
-        $CI =& get_instance();
-        $CI->load->helper('url');
-
-        if ( ! $this->getSessionData('ddauth.requestedUrl') ) {
-            $this->setSessionData('ddauth.requestedUrl', current_url());
-        }
-
-        redirect($this->signinRedirectPath);
-    }
-
     /**
      * Attempt continuation of an existing ticket
      *
@@ -319,11 +369,9 @@ class Ddauth {
      * ensures that the ticket has not already expired.
      * @return bool Was continuation attempt a success?
      */
-    function attemptContinuation() {
+    function _attemptContinuation() {
 
         $authData = $this->validateAuthAndExtractDataFromInput();
-
-        $this->reportError('debug', '<pre>' . print_r($authData, true) . '</pre>');
 
         // If there was no auth data, this is still a success case since
         // we are going to assume that this is a "continuation" of a
@@ -338,6 +386,7 @@ class Ddauth {
 
             $this->id = $authData['data']['u'];
             $this->isLoggedIn = true;
+            $this->reportAuthSuccess(false);
 
             $this->reportError('ticket.keepliave',
                 $this->ticketKeepalive . ' / ' .
@@ -350,12 +399,10 @@ class Ddauth {
                 $this->reportError('ticket.keepliave.timeRunning',
                     $timeRunning);
                 if ( $timeRunning > $this->ticketKeepaliveThreshold ) {
-                    $this->setTicket($this->generateTicket($this->id));
+                    $this->_setTicket($this->_generateTicket($this->id));
                 }
 
             }
-            //if ( $this->ticketKeepalive and ( $authData['token']['e'] - time() - $this->ticketExpiration ) <  $this->ticketKeepaliveThreshold ) {
-            //}
             return true;
         }
 
@@ -365,7 +412,6 @@ class Ddauth {
 
     /**
      * Attempt a page view
-     * @return bool Was continuation attempt a success?
      */
     function attemptPageView() {
         $CI =& get_instance();
@@ -377,20 +423,20 @@ class Ddauth {
      */
     function invalidateTicket() {
         $this->reportError('ticket.invalidate', 'Invalidating ticket');
-        $this->setCookie(null);
+        $this->_setCookie(null);
     }
 
     /**
      * Set a ticket
      */
-    function setTicket($value = null) {
-        $this->setCookie($value);
+    function _setTicket($value = null) {
+        $this->_setCookie($value);
     }
 
     /**
      * Generate a ticket
      */
-    function generateTicket($id = null) {
+    function _generateTicket($id = null) {
         // TODO: Do we really need this abstraction?
         return $this->generateAuthToken(
             array('u' => $id, 'tt' => 'auth')
@@ -401,7 +447,7 @@ class Ddauth {
      * Attempt to set a cookie
      * @input mixed $value Value
      */
-    function setCookie($value = null) {
+    function _setCookie($value = null) {
         if ( $this->shouldSetCookie ) {
             $CI =& get_instance();
             $CI->load->helper('cookie');
@@ -421,7 +467,7 @@ class Ddauth {
      * @return string
      */
     function getLogoutParam() {
-        return $this->getConfigParam(
+        return $this->_getConfigParam(
             'ddauth_params_logout_source',
             'ddauth_params_logout_paramName'
         );
@@ -432,7 +478,7 @@ class Ddauth {
      * @return string
      */
     function getLoginParam() {
-        return $this->getConfigParam(
+        return $this->_getConfigParam(
             'ddauth_params_login_source',
             'ddauth_params_login_paramName'
         );
@@ -443,7 +489,7 @@ class Ddauth {
      * @return string
      */
     function getLoginUsernameParam() {
-        return $this->getConfigParam(
+        return $this->_getConfigParam(
             'ddauth_params_login_source',
             'ddauth_params_login_usernameParamName'
         );
@@ -454,7 +500,7 @@ class Ddauth {
      * @return string
      */
     function getLoginPasswordParam() {
-        return $this->getConfigParam(
+        return $this->_getConfigParam(
             'ddauth_params_login_source',
             'ddauth_params_login_passwordParamName'
         );
@@ -473,21 +519,21 @@ class Ddauth {
      * @param string $sourceName Config name of allowed source
      * @param string $configName Config name of the param
      */
-    function getConfigParam($sourceName, $paramName) {
+    function _getConfigParam($sourceName, $paramName) {
 
-        if ( isset($this->configParamCache[$sourceName][$paramName]) ) {
-            return $this->configParamCache[$sourceName][$paramName];
+        if ( isset($this->_configParamCache[$sourceName][$paramName]) ) {
+            return $this->_configParamCache[$sourceName][$paramName];
         }
 
-        if ( ! isset($this->configParamCache[$sourceName]) ) {
-            $this->configParamCache[$sourceName] = array();
+        if ( ! isset($this->_configParamCache[$sourceName]) ) {
+            $this->_configParamCache[$sourceName] = array();
         }
 
         $CI =& get_instance();
         $config = $CI->config;
         $input = $CI->input;
 
-        $source = $this->sanitizeSource($config->item($sourceName));
+        $source = $this->_sanitizeSource($config->item($sourceName));
         $param = $config->item($paramName);
 
         $rv = null;
@@ -502,19 +548,30 @@ class Ddauth {
             $rv = $input->get($param);
         }
 
-        $this->configParamCache[$sourceName][$paramName] = $rv;
+        $this->_configParamCache[$sourceName][$paramName] = $rv;
 
         return $rv;
 
     }
 
-    function sanitizeBool($value = null) {
+    /**
+     * Sanitize a bool value
+     * @param mixed $value Input
+     * @return bool
+     */
+    function _sanitizeBool($value = null) {
         if ( $value === true ) return true;
         if ( strtolower($value) == 'true' ) return true;
         if ( $value == 1 ) return true;
         return false;
     }
-    function sanitizeSource($sourceValue) {
+
+    /**
+     * Sanitize a source value
+     * @param mixed $value Input
+     * @return string
+     */
+    function _sanitizeSource($sourceValue) {
         if ( preg_match('/^\s*(either|get|post)\s*$/i', $sourceValue, $matches) ) {
             return strtolower($matches[1]);
         }
@@ -529,7 +586,7 @@ class Ddauth {
      * @param callback $cb Callback to execute
      * @param array $args Arguments to send to method
      */
-    function controllerMethodCallback($methodName, $cb = null, $args = null) {
+    function _controllerMethodCallback($methodName, $cb = null, $args = null) {
         if ( $args === null ) $args = array();
         if ( $cb === null ) {
             $CI =& get_instance();
@@ -547,9 +604,36 @@ class Ddauth {
      * method on the controller.
      */
     function configure() {
-        return $this->controllerMethodCallback(
+        return $this->_controllerMethodCallback(
             $this->configurationMethodName,
             $this->configurationCb
+        );
+    }
+    /**
+     * Validate credentials.
+     *
+     * Will attempt to validate credentials using the credential validation
+     * callback or call the credential validation method on the controller.
+     * @param string $username Username to validate
+     * @param string $password Password to validate
+     */
+    function validateCredentials($username = null, $password = null) {
+        return $this->_controllerMethodCallback(
+            $this->validateCredentialsMethodName,
+            $this->validateCredentialsCb,
+            array($username, $password)
+        );
+    }
+
+    /**
+     * Handle authentication success
+     * @param bool $isLogin Is this a login success?
+     */
+    function reportAuthSuccess($isLogin = null) {
+        return $this->_controllerMethodCallback(
+            $this->handleAuthSuccessMethodName,
+            $this->handleAuthSuccessCb,
+            array($isLogin)
         );
     }
 
@@ -562,26 +646,10 @@ class Ddauth {
      * @param string $description Detailed texual description of the error
      */
     function reportError($key, $description) {
-        return $this->controllerMethodCallback(
+        return $this->_controllerMethodCallback(
             $this->errorMethodName,
             $this->errorCb,
             array($key, $description)
-        );
-    }
-
-    /**
-     * Validate credentials.
-     *
-     * Will attempt to validate credentials using the credential validation
-     * callback or call the credential validation method on the controller.
-     * @param string $username Username to validate
-     * @param string $password Password to validate
-     */
-    function validateCredentials($username = null, $password = null) {
-        return $this->controllerMethodCallback(
-            $this->validateCredentialsMethodName,
-            $this->validateCredentialsCb,
-            array($username, $password)
         );
     }
 
