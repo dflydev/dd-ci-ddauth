@@ -33,7 +33,15 @@ $config['ddauth_validateCredentialsMethodName'] = 'ddauthValidateCredentials';
  *
  * Method signature: $isLogin
  */
-$config['ddauth_handleAuthSuccessMethodName'] = 'ddauthHandleAuthSuccess';
+$config['ddauth_authSuccessMethodName'] = 'ddauthAuthSuccess';
+
+/**
+ * Handle execute complete.
+ *
+ * This method will be called on the controller if the controller
+ * implements this method after the execute method has completed.
+ */
+$config['ddauth_executeCompleteMethodName'] = 'ddauthExecuteComplete';
 
 /**
  * Error method name

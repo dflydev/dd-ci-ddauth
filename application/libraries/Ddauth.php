@@ -52,9 +52,16 @@ class Ddauth {
     /**
      * Handle authentication success
      * General configuration.
-     * Config: ddauth_validateCredentialsMethodName
+     * Config: ddauth_authSuccessMethodName
      */
-    var $handleAuthSuccessMethodName = null;
+    var $authSuccessMethodName = null;
+
+    /**
+     * Handle execute complete
+     * General configuration.
+     * Config: ddauth_executeCompleteMethodName
+     */
+    var $executeCompleteMethodName = null;
 
     /**
      * Name of controller method to call to handle errors.
@@ -146,7 +153,12 @@ class Ddauth {
     /**
      * Callback to handle authentication success.
      */
-    var $handleAuthSuccessCb = null;
+    var $authSuccessCb = null;
+
+    /**
+     * Callback to handle execute complete.
+     */
+    var $executeCompleteCb = null;
 
     /**
      * Callback to handle errors.
@@ -174,8 +186,12 @@ class Ddauth {
             'ddauth_validateCredentialsMethodName'
         );
 
-        $this->handleAuthSuccessMethodName = $config->item(
-            'ddauth_handleAuthSuccessMethodName'
+        $this->authSuccessMethodName = $config->item(
+            'ddauth_authSuccessMethodName'
+        );
+
+        $this->executeCompleteMethodName = $config->item(
+            'ddauth_executeCompleteMethodName'
         );
 
         $this->errorMethodName = $config->item(
@@ -230,6 +246,7 @@ class Ddauth {
         }
 
         redirect($this->signinRedirectPath);
+
     }
 
     /**
@@ -293,8 +310,7 @@ class Ddauth {
 
         }
 
-        $this->attemptPageView();
-
+        $this->reportExecuteComplete();
         return $this->isLoggedIn;
 
     }
@@ -411,14 +427,6 @@ class Ddauth {
     }
 
     /**
-     * Attempt a page view
-     */
-    function attemptPageView() {
-        $CI =& get_instance();
-
-    }
-
-    /**
      * Invalidate a ticket
      */
     function invalidateTicket() {
@@ -448,6 +456,7 @@ class Ddauth {
      * @input mixed $value Value
      */
     function _setCookie($value = null) {
+        $this->reportError('setCookie', $value);
         if ( $this->shouldSetCookie ) {
             $CI =& get_instance();
             $CI->load->helper('cookie');
@@ -631,9 +640,20 @@ class Ddauth {
      */
     function reportAuthSuccess($isLogin = null) {
         return $this->_controllerMethodCallback(
-            $this->handleAuthSuccessMethodName,
-            $this->handleAuthSuccessCb,
+            $this->authSuccessMethodName,
+            $this->authSuccessCb,
             array($isLogin)
+        );
+    }
+
+    /**
+     * Handle execute complete
+     */
+    function reportExecuteComplete() {
+        return $this->_controllerMethodCallback(
+            $this->executeCompleteMethodName,
+            $this->executeCompleteCb,
+            array()
         );
     }
 
