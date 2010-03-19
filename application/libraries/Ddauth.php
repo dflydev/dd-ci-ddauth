@@ -939,10 +939,8 @@ class Ddauth {
     function validateAuthAndExtractDataFromInput() {
 
         $CI =& get_instance();
-        $CI->load->library('encrypt');
 
         $input = $CI->input;
-        $encrypt = $CI->encrypt;
 
         $key = $this->ticketParamName;
 
@@ -997,6 +995,10 @@ class Ddauth {
     function generateDigest($data, $time) {
         $CI =& get_instance();
         $CI->load->library('encrypt');
+        if ( $CI->encrypt->encryption_key == '' ) {
+            // TODO: This might not be the best way to handle this...
+            log_message('error', '$config[\'encryption_key\'] should be set!');
+        }
         return $CI->encrypt->hash(
             $time . $data . $CI->encrypt->encryption_key
         );
