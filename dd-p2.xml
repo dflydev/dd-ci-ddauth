@@ -1,6 +1,6 @@
 <packages xmlns="http://dd-p2.dflydev.com/2010">
     <package>
-        <version>0.1</version>
+        <version>0.1.1</version>
         <name>Dragonfly Development CodeIgniter Auth Add-on</name>
         <url>http://github.com/dflydev/dd-ci-ddauth</url>
         <copyright>Copyright (c) 2010 Dragonfly Development</copyright>
