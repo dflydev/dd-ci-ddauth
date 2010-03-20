@@ -1,12 +1,12 @@
 <?php  if ( ! defined('BASEPATH')) exit('No direct script access allowed');
 /**
  * Ddauth.
- * @package dd_ci_ddauth
+ * @package ddauth
  */
 
 /**
  * Ddauth Class.
- * @package dd_ci_ddauth
+ * @package ddauth
  */
 class Ddauth {
 
