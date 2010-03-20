@@ -33,7 +33,7 @@ class Ddauth {
     /**
      * Should we try to set a cookie?
      */
-    var $shouldSetCookie = true;
+    var $shouldSendAuthTicketCookie = true;
 
     /**
      * Name of controller method to call to handle configuration.
@@ -75,7 +75,14 @@ class Ddauth {
      * Redirects configuration.
      * Config: ddauth_redirects_signin_redirectPath
      */
-    var $ddauth_redirects_signin_redirectPath = null;
+    var $signinRedirectPath = null;
+
+    /**
+     * Ticket secret
+     * Ticket configuration.
+     * Config: ddauth_ticket_secret
+     */
+    var $ticketSecret = null;
 
     /**
      * Ticket param name
@@ -204,6 +211,7 @@ class Ddauth {
         );
 
         // Ticket
+        $this->ticketSecret = $config->item('ddauth_ticket_secret');
         $this->ticketParamName = $config->item('ddauth_ticket_paramName');
         $this->ticketExpiration = $config->item('ddauth_ticket_expiration');
         $this->ticketKeepalive = $this->_sanitizeBool(
@@ -241,8 +249,8 @@ class Ddauth {
         $CI =& get_instance();
         $CI->load->helper('url');
 
-        if ( ! $this->getSessionData('ddauth.requestedUrl') ) {
-            $this->setSessionData('ddauth.requestedUrl', current_url());
+        if ( ! $this->_getSessionData('ddauth.requestedUrl') ) {
+            $this->_setSessionData('ddauth.requestedUrl', current_url());
         }
 
         redirect($this->signinRedirectPath);
@@ -261,28 +269,153 @@ class Ddauth {
      * @return mixed Null or user identification
      */
     function performLogin($username = null, $password = null) {
-        if ( $id = $this->validateCredentials($username, $password) ) {
-            $this->id = $id;
-            $this->_setTicket($this->_generateTicket($this->id));
-            $this->isLoggedIn = true;
-            $this->reportAuthSuccess(true);
-            return $id;
+        if ( $id = $this->_validateCredentials($username, $password) ) {
+            return $this->setAuthenticatedId($id, true);
         }
         return null;
+    }
+
+    /**
+     * Force set the authenticated user ID.
+     * @param string $id User ID
+     * @param bool $isLogin Is this from a login?
+     * @param bool $sendAuthTicketCookie Should an auth ticket cookie be sent?
+     * @param int $expires Length of time in seconds that the ticket is valid
+     */
+    function setAuthenticatedId($id = null, $isLogin = null, $sendAuthTicketCookie = true, $expires = null) {
+        $this->id = $id;
+        $this->isLoggedIn = true;
+        if ( $sendAuthTicketCookie ) {
+            $this->_sendAuthTicketCookie(
+                $this->generateAuthTicket($id, $expires)
+            );
+        }
+        $this->reportAuthSuccess($isLogin);
+        return $this->id;
+    }
+
+    /**
+     * Invalidate an auth ticket cookie
+     */
+    function invalidateAuthTicketCookie() {
+        $this->_sendAuthTicketCookie(null);
+    }
+
+    /**
+     * Generate an auth ticket for a user ID
+     *
+     * This method allows for the generation of a valid authentication ticket
+     * for the specified ID.
+     *
+     * @param mixed $id User ID
+     * @param int $expires Length of time in seconds that the ticket is valid
+     * @return string
+     */
+    function generateAuthTicket($id = null, $expires = null) {
+        if ( $expires === null ) $expires = $this->ticketExpiration;
+        $data = array('u' => $id, 'tt' => 'auth');
+        $time = time() + $expires;
+        $serializedData = serialize($data);
+        $digest = $this->_generateDigest($serializedData, $time);
+        return base64_encode('e=' . urlencode($time) . '&d=' . urlencode($serializedData) . '&h=' . urlencode($digest));
+    }
+
+    /**
+     * Validate an auth ticket
+     *
+     * Decodes the specified authentication ticket and returns an array
+     * containing information about the ticket.
+     *
+     * @param mixed $rawInput Suspected authentication ticket
+     * @return string Authenticated user ID
+     */
+    function decodeAuthTicket($rawInput = null) {
+
+        if ( $rawInput === null ) return null;
+
+        $parts = array();
+
+        foreach ( explode('&', base64_decode($rawInput)) as $pair ) {
+            $keyValuePair = explode('=', $pair);
+            if ( count($keyValuePair) == 2 ) {
+                list($key, $value) = $keyValuePair;
+                $parts[$key] = urldecode($value);
+            }
+        }
+
+        foreach ( array('e', 'h', 'd') as $k ) {
+            if ( ! array_key_exists($k, $parts) ) return NULL;
+        }
+
+        $expired = $parts['e'] < time() ? true : false;
+
+        if ( $parts['h'] == $this->_generateDigest($parts['d'], $parts['e']) ) {
+            return array(
+                'token' => $parts,
+                'data' => unserialize($parts['d']),
+                'expired' => $expired
+            );
+        } else {
+            return NULL;
+        }
+
+    }
+
+    /**
+     * Handle authentication success
+     * @param bool $isLogin Is this a login success?
+     */
+    function reportAuthSuccess($isLogin = null) {
+        return $this->_controllerMethodCallback(
+            $this->authSuccessMethodName,
+            $this->authSuccessCb,
+            array($isLogin)
+        );
+    }
+
+    /**
+     * Handle execute complete
+     */
+    function reportExecuteComplete() {
+        return $this->_controllerMethodCallback(
+            $this->executeCompleteMethodName,
+            $this->executeCompleteCb,
+            array()
+        );
+    }
+
+    /**
+     * Report errors.
+     *
+     * Will attempt to execute error callback or call the error method on
+     * the controller.
+     * @param string $key Short key identifying the error
+     * @param string $description Detailed texual description of the error
+     */
+    function reportError($key, $description) {
+        return $this->_controllerMethodCallback(
+            $this->errorMethodName,
+            $this->errorCb,
+            array($key, $description)
+        );
     }
 
     /**
      * Execute authentication
      *
      * Attempts to handle all of the specified automated auth related tasks
-     * in one go. Once this method has completed, we should be able to know
-     * whether or not the end user is authenticated or not.
+     * in one go. Once this method has completed, ddauth should know whether
+     * or not the end user has been successfully authenticated or not.
      *
-     * @return bool Are we authenticated?
+     * Accepts an optional configuration array that will be passed to
+     * _configure().
+     *
+     * @param array $config Additional configuration
+     * @return bool Was authentication successful?
      */
-    function execute() {
+    function execute($config = array()) {
 
-        $this->configure();
+        $this->_configure($config);
 
         $loggedIn = false;
 
@@ -296,7 +429,7 @@ class Ddauth {
         if ( $loggedOut ) {
 
             // If user is logged out, invalidate our ticket.
-            $this->invalidateTicket();
+            $this->invalidateAuthTicketCookie();
 
         } elseif ( ! $loggedIn ) {
 
@@ -305,7 +438,7 @@ class Ddauth {
             if ( ! $this->_attemptContinuation() ) {
                 // If we failed the continuation attempt we should
                 // invalidate the ticket.
-                $this->invalidateTicket();
+                $this->invalidateAuthTicketCookie();
             }
 
         }
@@ -327,7 +460,7 @@ class Ddauth {
         $CI =& get_instance();
         $config = $CI->config;
 
-        $logoutValue = $this->getLogoutParam();
+        $logoutValue = $this->_getLogoutParam();
 
         if ( $logoutValue ) {
             // We have asked to log out! We use this state
@@ -350,16 +483,16 @@ class Ddauth {
      */
     function _attemptLogin() {
 
-        $loginValue = $this->getLoginParam();
+        $loginValue = $this->_getLoginParam();
 
         if ( $loginValue ) {
 
-            $username = $this->getLoginUsernameParam();
-            $password = $this->getLoginPasswordParam();
+            $username = $this->_getLoginUsernameParam();
+            $password = $this->_getLoginPasswordParam();
 
             if ( $id = $this->performLogin($username, $password) ) {
-                if ( $requestedUrl = $this->getSessionData('ddauth.requestedUrl') ) {
-                    $this->unsetSessionData('ddauth.requestedUrl');
+                if ( $requestedUrl = $this->_getSessionData('ddauth.requestedUrl') ) {
+                    $this->_unsetSessionData('ddauth.requestedUrl');
                     redirect($requestedUrl);
                 }
                 return true;
@@ -368,7 +501,7 @@ class Ddauth {
                     'attemptLogin.invalid',
                     'Login attempt failure, unknown user or incorrect password'
                 );
-                $this->invalidateTicket();
+                $this->invalidateAuthTicketCookie();
                 $this->redirectToSignin();
             }
 
@@ -387,7 +520,7 @@ class Ddauth {
      */
     function _attemptContinuation() {
 
-        $authData = $this->validateAuthAndExtractDataFromInput();
+        $authData = $this->_findAndDecodeAuthTicket();
 
         // If there was no auth data, this is still a success case since
         // we are going to assume that this is a "continuation" of a
@@ -404,22 +537,19 @@ class Ddauth {
             $this->isLoggedIn = true;
             $this->reportAuthSuccess(false);
 
-            $this->reportError('ticket.keepliave',
-                $this->ticketKeepalive . ' / ' .
-                $this->ticketExpiration . ' / ' .
-                ( $authData['token']['e'] - time() ) .
-                ' < ' . ( $this->ticketExpiration - $this->ticketKeepaliveThreshold) );
             if ( $this->ticketKeepalive ) {
                 $e = $authData['token']['e'];
                 $timeRunning = $this->ticketExpiration - ( $e - time() );
-                $this->reportError('ticket.keepliave.timeRunning',
-                    $timeRunning);
                 if ( $timeRunning > $this->ticketKeepaliveThreshold ) {
-                    $this->_setTicket($this->_generateTicket($this->id));
+                    $this->_sendAuthTicketCookie(
+                        $this->generateAuthTicket($this->id)
+                    );
                 }
 
             }
+
             return true;
+
         }
 
         return false;
@@ -427,43 +557,20 @@ class Ddauth {
     }
 
     /**
-     * Invalidate a ticket
-     */
-    function invalidateTicket() {
-        $this->reportError('ticket.invalidate', 'Invalidating ticket');
-        $this->_setCookie(null);
-    }
-
-    /**
-     * Set a ticket
-     */
-    function _setTicket($value = null) {
-        $this->_setCookie($value);
-    }
-
-    /**
-     * Generate a ticket
-     */
-    function _generateTicket($id = null) {
-        // TODO: Do we really need this abstraction?
-        return $this->generateAuthToken(
-            array('u' => $id, 'tt' => 'auth')
-        );
-    }
-
-    /**
-     * Attempt to set a cookie
+     * Send the auth ticket cookie
      * @input mixed $value Value
+     * @param int $expires Length of time in seconds that the ticket is valid
      */
-    function _setCookie($value = null) {
+    function _sendAuthTicketCookie($value = null, $expires = null) {
+        if ( $expires === null ) $expires = $this->ticketExpiration;
         $this->reportError('setCookie', $value);
-        if ( $this->shouldSetCookie ) {
+        if ( $this->shouldSendAuthTicketCookie ) {
             $CI =& get_instance();
             $CI->load->helper('cookie');
             set_cookie(array(
                 'name' => $this->ticketParamName,
                 'value' => $value,
-                'expire' => $this->ticketExpiration,
+                'expire' => time() + $expires,
                 'domain' => $this->ticketCookieDomain,
                 'path' => $this->ticketCookiePath,
                 'prefix' => $this->ticketCookiePrefix
@@ -475,7 +582,7 @@ class Ddauth {
      * Get the value for the logout paramater.
      * @return string
      */
-    function getLogoutParam() {
+    function _getLogoutParam() {
         return $this->_getConfigParam(
             'ddauth_params_logout_source',
             'ddauth_params_logout_paramName'
@@ -486,7 +593,7 @@ class Ddauth {
      * Get the value for the login paramater.
      * @return string
      */
-    function getLoginParam() {
+    function _getLoginParam() {
         return $this->_getConfigParam(
             'ddauth_params_login_source',
             'ddauth_params_login_paramName'
@@ -497,7 +604,7 @@ class Ddauth {
      * Get the value for the login username paramater.
      * @return string
      */
-    function getLoginUsernameParam() {
+    function _getLoginUsernameParam() {
         return $this->_getConfigParam(
             'ddauth_params_login_source',
             'ddauth_params_login_usernameParamName'
@@ -508,7 +615,7 @@ class Ddauth {
      * Get the value for the login password paramater.
      * @return string
      */
-    function getLoginPasswordParam() {
+    function _getLoginPasswordParam() {
         return $this->_getConfigParam(
             'ddauth_params_login_source',
             'ddauth_params_login_passwordParamName'
@@ -611,13 +718,49 @@ class Ddauth {
      *
      * Will attempt to execute configuration callback or call the configuration
      * method on the controller.
+     *
+     * Optional configuration array can be used to set a select number
+     * of options at configuration time. Currently supports:
+     *
+     * 'shouldSendAuthTicketCookie'
+     * 'configurationMethodName'
+     * 'validateCredentialsMethodName'
+     * 'authSuccessMethodName'
+     * 'executeCompleteMethodName'
+     * 'errorMethodName'
+     * 'configurationCb'
+     * 'validateCredentialsCb'
+     * 'authSuccessCb'
+     * 'executeCompleteCb'
+     * 'errorCb'
+     *
+     * @param array $config Configuration array
      */
-    function configure() {
+    function _configure($config = array()) {
+        foreach ( $config as $key => $value ) {
+            switch($key) {
+                case 'shouldSendAuthTicketCookie':
+                case 'configurationMethodName':
+                case 'validateCredentialsMethodName':
+                case 'authSuccessMethodName':
+                case 'executeCompleteMethodName':
+                case 'errorMethodName':
+                case 'configurationCb':
+                case 'validateCredentialsCb':
+                case 'authSuccessCb':
+                case 'executeCompleteCb':
+                case 'errorCb':
+                    $this->$key = $value;
+                    break;
+            }
+        }
         return $this->_controllerMethodCallback(
             $this->configurationMethodName,
-            $this->configurationCb
+            $this->configurationCb,
+            array($config)
         );
     }
+
     /**
      * Validate credentials.
      *
@@ -626,50 +769,11 @@ class Ddauth {
      * @param string $username Username to validate
      * @param string $password Password to validate
      */
-    function validateCredentials($username = null, $password = null) {
+    function _validateCredentials($username = null, $password = null) {
         return $this->_controllerMethodCallback(
             $this->validateCredentialsMethodName,
             $this->validateCredentialsCb,
             array($username, $password)
-        );
-    }
-
-    /**
-     * Handle authentication success
-     * @param bool $isLogin Is this a login success?
-     */
-    function reportAuthSuccess($isLogin = null) {
-        return $this->_controllerMethodCallback(
-            $this->authSuccessMethodName,
-            $this->authSuccessCb,
-            array($isLogin)
-        );
-    }
-
-    /**
-     * Handle execute complete
-     */
-    function reportExecuteComplete() {
-        return $this->_controllerMethodCallback(
-            $this->executeCompleteMethodName,
-            $this->executeCompleteCb,
-            array()
-        );
-    }
-
-    /**
-     * Report errors.
-     *
-     * Will attempt to execute error callback or call the error method on
-     * the controller.
-     * @param string $key Short key identifying the error
-     * @param string $description Detailed texual description of the error
-     */
-    function reportError($key, $description) {
-        return $this->_controllerMethodCallback(
-            $this->errorMethodName,
-            $this->errorCb,
-            array($key, $description)
         );
     }
 
@@ -679,13 +783,13 @@ class Ddauth {
      * Session handling can be very specific to an application so we need
      * to be flexible in how we handle sessions. Setting and getting have
      * been abstracted out such that this library only directly refers to
-     * setSessionFlashData(), setSessionData(), unsetSessionData() and
-     * getSessionData().
+     * _setSessionFlashData(), _setSessionData(), _unsetSessionData() and
+     * _getSessionData().
      *
      * These methods will call the appropriate implementation based on
      * how the session handling has been setup and initialized here.
      */
-    function initSession() {
+    function _initSession() {
         if ( ! $this->isSessionInitialized ) {
             switch($this->sessionHandler) {
                 case 'ci':
@@ -697,66 +801,66 @@ class Ddauth {
                     // handling.
                     $CI =& get_instance();
                     $CI->load->library('session');
-                    $this->setSessionFlashDataCb = array(
-                        $this, 'setSessionFlashDataCi'
+                    $this->_setSessionFlashDataCb = array(
+                        $this, '_setSessionFlashDataCi'
                     );
-                    $this->setSessionDataCb = array(
-                        $this, 'setSessionDataCi'
+                    $this->_setSessionDataCb = array(
+                        $this, '_setSessionDataCi'
                     );
-                    $this->unsetSessionDataCb = array(
-                        $this, 'unsetSessionDataCi'
+                    $this->_unsetSessionDataCb = array(
+                        $this, '_unsetSessionDataCi'
                     );
-                    $this->getSessionDataCb = array(
-                        $this, 'getSessionDataCi'
+                    $this->_getSessionDataCb = array(
+                        $this, '_getSessionDataCi'
                     );
                     break;
                 case 'php':
                     // Native PHP sessions are going to be
                     // supported eventually.
-                    $this->setSessionFlashDataCb = array(
-                        $this, 'setSessionFlashDataPhp'
+                    $this->_setSessionFlashDataCb = array(
+                        $this, '_setSessionFlashDataPhp'
                     );
-                    $this->setSessionDataCb = array(
-                        $this, 'setSessionDataPhp'
+                    $this->_setSessionDataCb = array(
+                        $this, '_setSessionDataPhp'
                     );
-                    $this->unsetSessionDataCb = array(
-                        $this, 'unsetSessionDataPhp'
+                    $this->_unsetSessionDataCb = array(
+                        $this, '_unsetSessionDataPhp'
                     );
-                    $this->getSessionDataCb = array(
-                        $this, 'getSessionDataPhp'
+                    $this->_getSessionDataCb = array(
+                        $this, '_getSessionDataPhp'
                     );
                     break;
                 case 'callbacks':
                     // Callbacks for each of these three functions
                     // will be supported eventually.
-                    $this->setSessionFlashDataCb = array(
-                        $this, 'setSessionFlashDataCallbacks'
+                    $this->_setSessionFlashDataCb = array(
+                        $this, '_setSessionFlashDataCallbacks'
                     );
-                    $this->setSessionDataCb = array(
-                        $this, 'setSessionDataCallbacks'
+                    $this->_setSessionDataCb = array(
+                        $this, '_setSessionDataCallbacks'
                     );
-                    $this->unsetSessionDataCb = array(
-                        $this, 'unsetSessionDataCallbacks'
+                    $this->_unsetSessionDataCb = array(
+                        $this, '_unsetSessionDataCallbacks'
                     );
-                    $this->getSessionDataCb = array(
-                        $this, 'getSessionDataCallbacks'
+                    $this->_getSessionDataCb = array(
+                        $this, '_getSessionDataCallbacks'
                     );
                     break;
                 case 'methods':
                     // Method names to be called on the controller for
                     // each of these three functions will be
                     // supported eventually.
-                    $this->setSessionFlashDataCb = array(
-                        $this, 'setSessionFlashDataMethods'
+                    $this->_setSessionFlashDataCb = array(
+                        $this, '_setSessionFlashDataMethods'
                     );
-                    $this->setSessionDataCb = array(
-                        $this, 'setSessionDataMethods'
+                    $this->_setSessionDataCb = array(
+                        $this, '_setSessionDataMethods'
                     );
-                    $this->unsetSessionDataCb = array(
-                        $this, 'unsetSessionDataMethods'
+                    $this->_unsetSessionDataCb = array(
+                        $this, '_unsetSessionDataMethods'
                     );
-                    $this->getSessionDataCb = array(
-                        $this, 'getSessionDataMethods'
+                    $this->_getSessionDataCb = array(
+                        $this, '_getSessionDataMethods'
                     );
                     break;
                 default:
@@ -777,21 +881,21 @@ class Ddauth {
      *
      * Routes to the appropriate underlying session handler implementation.
      */
-    function setSessionFlashData($key, $value = null) {
+    function _setSessionFlashData($key, $value = null) {
         if ( ! $this->allowFlash ) {
-            return $this->setSessionData($key, $value);
+            return $this->_setSessionData($key, $value);
         }
-        $this->initSession();
-        return call_user_func($this->setSessionFlashDataCb, $key, $value);
+        $this->_initSession();
+        return call_user_func($this->_setSessionFlashDataCb, $key, $value);
     }
     /**
      * Set session data
      *
      * Routes to the appropriate underlying session handler implementation.
      */
-    function setSessionData($key, $value = null) {
-        $this->initSession();
-        return call_user_func($this->setSessionDataCb, $key, $value);
+    function _setSessionData($key, $value = null) {
+        $this->_initSession();
+        return call_user_func($this->_setSessionDataCb, $key, $value);
     }
 
     /**
@@ -799,9 +903,9 @@ class Ddauth {
      *
      * Routes to the appropriate underlying session handler implementation.
      */
-    function unsetSessionData($key) {
-        $this->initSession();
-        return call_user_func($this->unsetSessionDataCb, $key);
+    function _unsetSessionData($key) {
+        $this->_initSession();
+        return call_user_func($this->_unsetSessionDataCb, $key);
     }
 
     /**
@@ -809,134 +913,137 @@ class Ddauth {
      *
      * Routes to the appropriate underlying session handler implementation.
      */
-    function getSessionData($key) {
-        $this->initSession();
-        return call_user_func($this->getSessionDataCb, $key);
+    function _getSessionData($key) {
+        $this->_initSession();
+        return call_user_func($this->_getSessionDataCb, $key);
     }
 
     /**
-     * CodeIgniter implementation of setSessionFlashData
+     * CodeIgniter implementation of _setSessionFlashData
      */
-    function setSessionFlashDataCi($key, $value = null) {
+    function _setSessionFlashDataCi($key, $value = null) {
         $CI =& get_instance();
         return $CI->session->set_flashdata($key, $value);
     }
 
     /**
-     * CodeIgniter implementation of setSessionData
+     * CodeIgniter implementation of _setSessionData
      */
-    function setSessionDataCi($key, $value = null) {
+    function _setSessionDataCi($key, $value = null) {
         $CI =& get_instance();
         return $CI->session->set_userdata($key, $value);
     }
 
     /**
-     * CodeIgniter implementation of unsetSessionData
+     * CodeIgniter implementation of _unsetSessionData
      */
-    function unsetSessionDataCi($key) {
+    function _unsetSessionDataCi($key) {
         $CI =& get_instance();
         return $CI->session->unset_userdata($key);
     }
 
     /**
-     * CodeIgniter implementation of getSessionData
+     * CodeIgniter implementation of _getSessionData
      */
-    function getSessionDataCi($key) {
+    function _getSessionDataCi($key) {
         $CI =& get_instance();
         return $CI->session->userdata($key);
     }
 
     /**
-     * PHP Session implementation of setSessionFlashData
+     * PHP Session implementation of _setSessionFlashData
      */
-    function setSessionFlashDataPhp($key, $value = null) {
+    function _setSessionFlashDataPhp($key, $value = null) {
         throw new Exception('Set Session Flash Data for PHP not implemented.');
     }
 
     /**
-     * PHP Session implementation of setSessionData
+     * PHP Session implementation of _setSessionData
      */
-    function setSessionDataPhp($key, $value = null) {
+    function _setSessionDataPhp($key, $value = null) {
         throw new Exception('Set Session Data for PHP not implemented.');
     }
 
     /**
-     * PHP Session implementation of unsetSessionData
+     * PHP Session implementation of _unsetSessionData
      */
-    function unsetSessionDataPhp($key) {
+    function _unsetSessionDataPhp($key) {
         throw new Exception('Unset Session Data for PHP not implemented.');
     }
 
     /**
-     * PHP Session implementation of getSessionData
+     * PHP Session implementation of _getSessionData
      */
-    function getSessionDataPhp($key) {
+    function _getSessionDataPhp($key) {
         throw new Exception('Get Session Data for PHP not implemented.');
     }
 
     /**
-     * Callbacks Session implementation of setSessionFlashData
+     * Callbacks Session implementation of _setSessionFlashData
      */
-    function setSessionFlashDataCallbacks($key, $value = null) {
+    function _setSessionFlashDataCallbacks($key, $value = null) {
         throw new Exception(
             'Set Session Flash Data for Callbacks not implemented.'
         );
     }
 
     /**
-     * Callbacks Session implementation of setSessionData
+     * Callbacks Session implementation of _setSessionData
      */
-    function setSessionDataCallbacks($key, $value = null) {
+    function _setSessionDataCallbacks($key, $value = null) {
         throw new Exception('Set Session Data for Callbacks not implemented.');
     }
 
     /**
-     * Callbacks Session implementation of unsetSessionData
+     * Callbacks Session implementation of _unsetSessionData
      */
-    function unsetSessionDataCallbacks($key) {
+    function _unsetSessionDataCallbacks($key) {
         throw new Exception(
             'Unset Session Data for Callbacks not implemented.'
         );
     }
 
     /**
-     * Callbacks Session implementation of getSessionData
+     * Callbacks Session implementation of _getSessionData
      */
-    function getSessionDataCallbacks($key) {
+    function _getSessionDataCallbacks($key) {
         throw new Exception('Get Session Data for Callbacks not implemented.');
     }
 
     /**
-     * Methods Session implementation of setSessionFlashData
+     * Methods Session implementation of _setSessionFlashData
      */
-    function setSessionFlashDataMethods($key, $value = null) {
+    function _setSessionFlashDataMethods($key, $value = null) {
         throw new Exception(
             'Set Session Flash Data for Methods not implemented.'
         );
     }
 
     /**
-     * Methods Session implementation of setSessionData
+     * Methods Session implementation of _setSessionData
      */
-    function setSessionDataMethods($key, $value = null) {
+    function _setSessionDataMethods($key, $value = null) {
         throw new Exception('Set Session Data for Methods not implemented.');
     }
 
     /**
-     * Methods Session implementation of unsetSessionData
+     * Methods Session implementation of _unsetSessionData
      */
-    function unsetSessionDataMethods($key) {
+    function _unsetSessionDataMethods($key) {
         throw new Exception('Unset Session Data for Methods not implemented.');
     }
 
     /**
-     * Methods Session implementation of getSessionData
+     * Methods Session implementation of _getSessionData
      */
-    function getSessionDataMethods($key) {
+    function _getSessionDataMethods($key) {
         throw new Exception('Get Session Data for Methods not implemented.');
     }
 
-    function validateAuthAndExtractDataFromInput() {
+    /**
+     * Find and decode auth ticket from request
+     */
+    function _findAndDecodeAuthTicket() {
 
         $CI =& get_instance();
 
@@ -958,50 +1065,25 @@ class Ddauth {
             return NULL;
         }
 
-        $parts = array();
-        foreach ( explode('&', base64_decode($authString)) as $pair ) {
-            $keyValuePair = explode('=', $pair);
-            if ( count($keyValuePair) == 2 ) {
-                list($key, $value) = $keyValuePair;
-                $parts[$key] = urldecode($value);
-            }
+        $authTicket = $this->decodeAuthTicket($authString);
+        if ( $authTicket === null ) {
+            // We found an auth string but it is invalid! We should
+            // make sure that nobody tries this funny business
+            // again!
+            $this->invalidateAuthTicketCookie();
         }
-
-        foreach ( array('e', 'h', 'd') as $k ) {
-            if ( ! array_key_exists($k, $parts) ) return NULL;
-        }
-
-        $expired = $parts['e'] < time() ? true : false;
-
-        if ( $parts['h'] == $this->generateDigest($parts['d'], $parts['e']) ) {
-            return array(
-                'token' => $parts,
-                'data' => unserialize($parts['d']),
-                'expired' => $expired
-            );
-        } else {
-            return NULL;
-        }
+        return $authTicket;
 
     }
 
-    function generateAuthToken($data) {
-        $time = time() + $this->ticketExpiration;
-        $serializedData = serialize($data);
-        $digest = $this->generateDigest($serializedData, $time);
-        return base64_encode('e=' . urlencode($time) . '&d=' . urlencode($serializedData) . '&h=' . urlencode($digest));
-    }
-
-    function generateDigest($data, $time) {
-        $CI =& get_instance();
-        $CI->load->library('encrypt');
-        if ( $CI->encrypt->encryption_key == '' ) {
-            // TODO: This might not be the best way to handle this...
-            log_message('error', '$config[\'encryption_key\'] should be set!');
-        }
-        return $CI->encrypt->hash(
-            $time . $data . $CI->encrypt->encryption_key
-        );
+    /**
+     * Generate a digest for the specified data and expiration time
+     * @param string $data Data
+     * @param int $time Expiration time
+     * @return string
+     */
+    function _generateDigest($data, $time) {
+        return sha1( $time . $data . $this->ticketSecret );
     }
 
 }

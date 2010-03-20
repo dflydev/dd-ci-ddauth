@@ -8,6 +8,8 @@
  *
  * This method can be used to do controller-specific configuration
  * of ddauth prior to ddauth doing its work.
+ *
+ * Method signature: $config = array()
  */
 $config['ddauth_configurationMethodName'] = 'ddauthConfigure';
 
@@ -121,6 +123,13 @@ $config['ddauth_redirects_signin_redirectPath'] = 'signin';
 /**
  * TICKET
  */
+
+/**
+ * Ticket secret
+ *
+ * The secret used for generating ticket digest
+ */
+$config['ddauth_ticket_secret'] = 'VERY IMPORTAT PLEASE SET';
 
 /**
  * Ticket param name
