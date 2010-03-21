@@ -1,20 +1,22 @@
 <packages xmlns="http://dd-p2.dflydev.com/2010">
     <package>
-        <version>0.1.1</version>
-        <name>Dragonfly Development CodeIgniter Auth Add-on</name>
-        <url>http://github.com/dflydev/dd-ci-ddauth</url>
+        <version>0.1.2</version>
+        <name>ddauth - Dragonfly Development CodeIgniter Auth Add-on</name>
+        <url>http://code.google.com/p/dd-ci-ddauth/</url>
         <copyright>Copyright (c) 2010 Dragonfly Development</copyright>
         <license>Licensed under the New BSD License.</license>
         <files>
             <file name="README" />
-            <file name="LICENSE.txt" />
+            <file name="INSTALL" />
+            <file name="LICENSE" />
             <glob name="configs" pattern="application/config/*.php" />
             <glob name="libraries" pattern="application/libraries/*.php" />
         </files>
         <outputs>
             <output name="dd-ci-ddauth">
                 <includeFile name="README" />
-                <includeFile name="LICENSE.txt" />
+                <includeFile name="INSTALL" />
+                <includeFile name="LICENSE" />
                 <includeGlob name="configs" />
                 <includeGlob name="libraries" />
             </output>

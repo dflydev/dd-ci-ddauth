@@ -183,7 +183,12 @@ class Ddauth {
 
         $config = $CI->config;
 
-        $config->load('dd_ci_ddauth');
+        if ( ! $config->load('ddauth', false, true) ) {
+            // Support legacy configuration file... for now.
+            if ( ! $config->load('dd_ci_ddauth', false, true) ) {
+                show_error('The ddauth configuration file does not exist.');
+            }
+        }
 
         $this->configurationMethodName = $config->item(
             'ddauth_configurationMethodName'

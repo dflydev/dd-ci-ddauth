@@ -213,7 +213,7 @@ $config['ddauth_session_allowFlash'] = true;
 
 
 // Include site-specific ddauth configuration if it exists.
-$siteConfig = APPPATH.'config/dd_ci_ddauth_site'.EXT;
+$siteConfig = APPPATH.'config/ddauth_site'.EXT;
 if ( file_exists($siteConfig) ) include($siteConfig);
 
 ?>
